@@ -49,7 +49,7 @@
       position: sticky;
       z-index: 20;
       display: grid;
-      gap: 8px;
+      gap: 10px;
       padding: 10px;
       background: rgba(7, 17, 31, 0.94);
       backdrop-filter: blur(14px);
@@ -553,7 +553,7 @@
       }
 
       .toolbar {
-        grid-template-columns: 1.1fr 1fr 0.8fr 1fr;
+        grid-template-columns: repeat(4, 1fr);
       }
 
       .optionbar {
@@ -563,7 +563,7 @@
       button,
       label,
       select {
-        min-height: 44px;
+        min-height: 52px;
         padding: 10px 14px;
         border-radius: 13px;
         font-size: 13px;
@@ -585,6 +585,42 @@
       }
     }
 
+
+    button,
+    label,
+    select,
+    .download-one {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      line-height: 1.2;
+      transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+    }
+
+    select {
+      display: block;
+      padding-left: 14px;
+      padding-right: 14px;
+    }
+
+    button:not(:disabled):hover,
+    label:hover,
+    select:hover,
+    .download-one:hover {
+      transform: translateY(-1px);
+      border-color: rgba(125, 211, 252, 0.56);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.09), 0 10px 24px rgba(14, 165, 233, 0.12);
+    }
+
+    @media (max-width: 899px) {
+      button,
+      label,
+      select {
+        min-height: 46px;
+      }
+    }
+
     .hint {
       padding: 8px 14px 18px;
       color: #94a3b8;
@@ -601,49 +637,54 @@
 </header>
 
 <div class="toolbar" id="mainToolbar">
-  <label for="fileInput">사진 여러 장 선택</label>
-  <button id="cameraBtn">카메라 촬영</button>
-  <button id="clearBtn" class="danger" disabled>초기화</button>
-  <button id="shareBtn" class="good" disabled>한번에 저장/공유</button>
+  <label for="fileInput">🖼️ 사진 선택</label>
+  <button id="cameraBtn">📷 카메라</button>
+  <button id="clearBtn" class="danger" disabled>🔄 초기화</button>
+  <button id="shareBtn" class="good" disabled>📤 저장/공유</button>
 </div>
 
 <div class="optionbar" id="optionbar">
 
   <select id="filterMode">
-    <option value="auto" selected>보정필터</option>
-    <option value="original">원본</option>
-    <option value="auto">자동</option>
-    <option value="bright">밝게</option>
-    <option value="gray">흑백</option>
-    <option value="sharp">선명하게</option>
-    <option value="shadow">그림자제거</option>
+    <option value="auto" selected>⚙️ 보정필터</option>
+    <option value="original">⚙️ 원본</option>
+    <option value="auto">⚙️ 자동</option>
+    <option value="bright">⚙️ 밝게</option>
+    <option value="gray">⚙️ 흑백</option>
+    <option value="sharp">⚙️ 선명하게</option>
+    <option value="shadow">⚙️ 그림자제거</option>
   </select>
 
   <select id="detectMode">
-    <option value="auto" selected>문서종류</option>
-    <option value="auto">자동보정</option>
-    <option value="document">문서</option>
-    <option value="stats">통계</option>
+    <option value="auto" selected>📄 문서종류</option>
+    <option value="auto">📄 자동보정</option>
+    <option value="document">📄 문서(YOLO)</option>
+    <option value="stats">📄 통계</option>
   </select>
 
   <select id="sizeMode">
-    <option value="mid" selected>용량설정</option>
-    <option value="high">고용량: 고화질 3000px / JPG 92%</option>
-    <option value="mid">중용량: 표준 2000px / JPG 82%</option>
-    <option value="low">저용량: 카톡용 1200px / JPG 70%</option>
+    <option value="mid" selected>🗜️ 용량설정</option>
+    <option value="high">🗜️ 고용량 3000px / JPG 92%</option>
+    <option value="mid">🗜️ 중용량 2000px / JPG 82%</option>
+    <option value="low">🗜️ 저용량 1200px / JPG 70%</option>
   </select>
 
-  <button id="emptyOptionBtn" class="empty-option-btn" disabled aria-hidden="true">&nbsp;</button>
-  <button id="cycleDetectBtn" disabled style="display:none">영역 후보 변경</button>
+  <select id="saveMode">
+    <option value="image" selected>📥 저장방식</option>
+    <option value="image">📥 이미지 저장</option>
+    <option value="zip">🗜️ ZIP 저장</option>
+    <option value="auto">🤖 자동 선택</option>
+  </select>
+  <button id="cycleDetectBtn" disabled style="display:none">🔁 영역 후보 변경</button>
 </div>
 <input type="hidden" id="sortMode" value="selected" />
-<button id="resortBtn" style="display:none" disabled>재정렬</button>
+<button id="resortBtn" style="display:none" disabled>↕️ 재정렬</button>
 
 <div class="editbar" id="editToolbar">
-  <button id="backBtn">검수 목록</button>
-  <button id="autoBtn" class="warn">자동 영역</button>
-  <button id="cycleEditBtn">후보 변경</button>
-  <button id="saveEditBtn" class="good">수정</button>
+  <button id="backBtn">📋 검수 목록</button>
+  <button id="autoBtn" class="warn">🎯 자동 영역</button>
+  <button id="cycleEditBtn">🔁 후보 변경</button>
+  <button id="saveEditBtn" class="good">✅ 수정</button>
 </div>
 
 <input id="fileInput" type="file" accept="image/*" multiple />
@@ -688,6 +729,7 @@
 
 <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvLoaded();"></script>
 <script src="https://cdn.jsdelivr.net/gh/ColonelParrot/jscanify@master/src/jscanify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
 <script>
 (() => {
@@ -727,6 +769,7 @@
   const resortBtn = document.getElementById("resortBtn");
   const filterMode = document.getElementById("filterMode");
   const sizeMode = document.getElementById("sizeMode");
+  const saveMode = document.getElementById("saveMode");
   const detectMode = document.getElementById("detectMode");
   const cycleDetectBtn = document.getElementById("cycleDetectBtn");
 
@@ -1090,6 +1133,7 @@
 
   filterMode.addEventListener("change", reprocessAllResults);
   sizeMode.addEventListener("change", reprocessAllResults);
+  if (saveMode) saveMode.addEventListener("change", () => setStatus("저장방식이 변경되었습니다."));
 
   detectMode.addEventListener("change", async () => {
     if (detectMode.value === "stats") {
@@ -1514,16 +1558,16 @@
 
       const editBtn = document.createElement("button");
       editBtn.className = "warn";
-      editBtn.textContent = "수정";
+      editBtn.textContent = "✏️ 수정";
       editBtn.addEventListener("click", () => showEditMode(index));
 
       const rotateBtn = document.createElement("button");
-      rotateBtn.textContent = "회전";
+      rotateBtn.textContent = "↻ 회전";
       rotateBtn.addEventListener("click", () => rotateItem(index));
 
       const a = document.createElement("a");
       a.className = "download-one";
-      a.textContent = "저장";
+      a.textContent = "⬇️ 저장";
       a.href = item.resultDataUrl;
       a.download = makeOutputName(item.name, index);
 
@@ -1599,6 +1643,66 @@
   async function shareOrShowSaveView() {
     if (!items.length) return;
 
+    const selectedSaveMode = saveMode?.value || "image";
+    const effectiveMode = selectedSaveMode === "auto"
+      ? (isMobileDevice() ? "image" : "zip")
+      : selectedSaveMode;
+
+    if (effectiveMode === "zip") {
+      await downloadZipResults();
+      return;
+    }
+
+    await openImageSaveView();
+  }
+
+  function isMobileDevice() {
+    return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
+  }
+
+  async function downloadZipResults() {
+    if (typeof JSZip === "undefined") {
+      setStatus("ZIP 저장 모듈을 불러오지 못했습니다. 이미지 저장 방식을 사용하세요.");
+      alert("ZIP 저장 모듈을 불러오지 못했습니다. 이미지 저장 방식을 사용하세요.");
+      return;
+    }
+
+    try {
+      setStatus("ZIP 파일 생성 중...");
+      const zip = new JSZip();
+
+      items.forEach((item, index) => {
+        zip.file(makeOutputName(item.name, index), item.resultBlob);
+      });
+
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+
+      const now = new Date();
+      const stamp =
+        String(now.getFullYear()) +
+        String(now.getMonth() + 1).padStart(2, "0") +
+        String(now.getDate()).padStart(2, "0") + "_" +
+        String(now.getHours()).padStart(2, "0") +
+        String(now.getMinutes()).padStart(2, "0");
+
+      a.href = url;
+      a.download = `jScanner_${stamp}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+      setStatus("ZIP 다운로드를 시작했습니다.");
+    } catch (err) {
+      console.warn("zip failed", err);
+      setStatus("ZIP 저장에 실패했습니다. 이미지 저장 방식으로 전환하세요.");
+      alert("ZIP 저장에 실패했습니다. 이미지 저장 방식으로 전환하세요.");
+    }
+  }
+
+  async function openImageSaveView() {
     try {
       const shareFiles = items.map((item, index) => {
         return new File([item.resultBlob], makeOutputName(item.name, index), { type: "image/jpeg" });
@@ -1629,9 +1733,9 @@
     const guide = document.createElement("div");
     guide.className = "save-guide";
     guide.innerHTML = `
-      <b>사진 저장 화면</b><br>
-      이 브라우저에서는 여러 장 자동 공유가 막혔습니다.<br>
-      아래 이미지를 순서대로 <b>길게 누르기 → 사진에 저장</b> 하세요.
+      <b>📥 이미지 저장 화면</b><br>
+      아래 이미지를 순서대로 <b>길게 누르기 → 사진에 저장</b> 하세요.<br>
+      PC에서는 저장방식을 <b>ZIP 저장</b>으로 바꾸면 한 번에 받을 수 있습니다.
     `;
     saveView.appendChild(guide);
 
