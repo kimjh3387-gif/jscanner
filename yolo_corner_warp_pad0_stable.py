@@ -1,10 +1,17 @@
-from ultralytics import YOLO
+import os
+import tempfile
 import cv2
 import numpy as np
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = BASE_DIR / "runs" / "detect" / "train" / "weights" / "best.pt"
+
+# Render 같은 서버 환경에서는 기본 Ultralytics 설정 폴더에 쓰기 권한이 없을 수 있음.
+# YOLO/torch는 무겁기 때문에 앱 시작 때가 아니라 실제 요청 시점에만 불러온다.
+YOLO_CONFIG_DIR = Path(os.environ.get("YOLO_CONFIG_DIR", Path(tempfile.gettempdir()) / "Ultralytics"))
+YOLO_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("YOLO_CONFIG_DIR", str(YOLO_CONFIG_DIR))
 
 SIZE_PROFILES = {
     "high": {"max_side": 3000, "quality": 92},
@@ -38,7 +45,21 @@ def get_model():
     global _model
 
     if _model is None:
-        _model = YOLO(str(resolve_model_path()))
+        model_path = resolve_model_path()
+
+        print(f"[jScanner] Loading YOLO model: {model_path}", flush=True)
+        print(f"[jScanner] YOLO model exists: {model_path.exists()}", flush=True)
+        if model_path.exists():
+            print(f"[jScanner] YOLO model size: {model_path.stat().st_size} bytes", flush=True)
+
+        # 중요:
+        # ultralytics/torch는 무겁기 때문에 Flask 앱 시작 시점이 아니라
+        # 실제 문서(YOLO) 변환 요청이 들어온 순간에만 import한다.
+        from ultralytics import YOLO
+
+        _model = YOLO(str(model_path))
+
+        print("[jScanner] YOLO model loaded", flush=True)
 
     return _model
 
@@ -316,6 +337,8 @@ def apply_shadow_filter(img):
 
 
 def apply_filter(img, filter_mode):
+    if filter_mode == "original":
+        return img
     if filter_mode == "bright":
         return apply_bright_filter(img)
     if filter_mode == "gray":
@@ -354,14 +377,22 @@ def save_jpeg(img, output_path, size_mode):
 
 
 def process_image(image_path, output_path, size_mode="mid", filter_mode="auto"):
+    print("[jScanner] process_image called", flush=True)
+    print(f"[jScanner] image_path={image_path}", flush=True)
+    print(f"[jScanner] output_path={output_path}", flush=True)
+    print(f"[jScanner] size_mode={size_mode}, filter_mode={filter_mode}", flush=True)
+
     model = get_model()
     img = cv2.imread(str(image_path))
 
     if img is None:
         raise FileNotFoundError(f"이미지를 못 읽음: {image_path}")
 
-    results = model.predict(str(image_path), conf=0.25, imgsz=512, save=False)
+    results = model.predict(str(image_path), conf=0.25, imgsz=512, save=False, verbose=False)
     boxes = results[0].boxes
+
+    box_count = 0 if boxes is None else len(boxes)
+    print(f"[jScanner] YOLO boxes detected: {box_count}", flush=True)
 
     if boxes is None or len(boxes) == 0:
         raise RuntimeError("YOLO가 슬라이드를 못 찾음")
@@ -375,6 +406,8 @@ def process_image(image_path, output_path, size_mode="mid", filter_mode="auto"):
     filtered = apply_filter(warped_final, filter_mode)
 
     save_jpeg(filtered, output_path, size_mode)
+
+    print(f"[jScanner] saved result: {output_path}", flush=True)
 
     return {
         "ok": True,
