@@ -41,7 +41,7 @@ def process_document():
             size_mode = "mid"
 
         filter_mode = request.form.get("filter_mode", "auto")
-        if filter_mode not in ["auto", "bright", "gray", "sharp", "shadow"]:
+        if filter_mode not in ["original", "auto", "bright", "gray", "sharp", "shadow"]:
             filter_mode = "auto"
 
         input_name = f"{uuid.uuid4().hex}{ext}"

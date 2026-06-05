@@ -388,7 +388,19 @@ def process_image(image_path, output_path, size_mode="mid", filter_mode="auto"):
     if img is None:
         raise FileNotFoundError(f"이미지를 못 읽음: {image_path}")
 
-    results = model.predict(str(image_path), conf=0.25, imgsz=512, save=False, verbose=False)
+    print("[jScanner] BEFORE predict", flush=True)
+
+    results = model.predict(
+        str(image_path),
+        conf=0.25,
+        imgsz=320,
+        save=False,
+        verbose=False,
+        device="cpu"
+    )
+
+    print("[jScanner] AFTER predict", flush=True)
+
     boxes = results[0].boxes
 
     box_count = 0 if boxes is None else len(boxes)
