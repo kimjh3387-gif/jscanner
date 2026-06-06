@@ -1555,108 +1555,18 @@
     }
 
     // 일부 export는 confidence가 logit처럼 나올 수 있어 보정 여지를 둔다.
-    // 기존 방식은 confidence 1등만 고르기 때문에 큰 문서/중앙 문서 판단이 약했다.
-    // 아래는 confidence + 면적 + 중앙성 + 문서 비율을 같이 보고 최종 박스를 고른다.
     let best = null;
-    let bestScore = -Infinity;
-    const scoredRows = [];
 
     for (const row of rows) {
       let conf = row.conf;
-
-      if (conf > 1.0 || conf < 0.0) {
-        conf = sigmoid(conf);
-      }
+      if (conf > 1.0 || conf < 0.0) conf = sigmoid(conf);
 
       if (!Number.isFinite(conf)) continue;
-      if (conf < YOLO_CONF_THRESHOLD * 0.45) continue;
 
-      const x1Model = row.cx - row.bw / 2;
-      const y1Model = row.cy - row.bh / 2;
-      const x2Model = row.cx + row.bw / 2;
-      const y2Model = row.cy + row.bh / 2;
-
-      const x1 = clamp((x1Model - meta.padX) / meta.scale, 0, imageW);
-      const y1 = clamp((y1Model - meta.padY) / meta.scale, 0, imageH);
-      const x2 = clamp((x2Model - meta.padX) / meta.scale, 0, imageW);
-      const y2 = clamp((y2Model - meta.padY) / meta.scale, 0, imageH);
-
-      const boxW = Math.max(0, x2 - x1);
-      const boxH = Math.max(0, y2 - y1);
-
-      if (boxW < imageW * 0.10 || boxH < imageH * 0.10) continue;
-
-      const areaRatio = (boxW * boxH) / Math.max(1, imageW * imageH);
-      const centerX = (x1 + x2) / 2 / Math.max(1, imageW);
-      const centerY = (y1 + y2) / 2 / Math.max(1, imageH);
-
-      const centerPenalty =
-        Math.abs(centerX - 0.5) +
-        Math.abs(centerY - 0.5);
-
-      const aspect = boxW / Math.max(1, boxH);
-
-      // 정책표/슬라이드 사진은 보통 가로형 문서가 많다.
-      // 너무 길쭉하거나 너무 작은 후보는 감점한다.
-      let aspectBonus = 0;
-      if (aspect >= 1.15 && aspect <= 2.25) {
-        aspectBonus = 0.18;
-      } else if (aspect >= 0.90 && aspect <= 2.60) {
-        aspectBonus = 0.06;
-      }
-
-      // 문서가 화면 대부분을 차지하는 케이스가 많아서 45~95% 면적을 선호한다.
-      // 단순 최대 면적만 고르면 브라우저/상단바까지 먹을 수 있어서 과대 후보는 살짝 감점.
-      let areaBonus = 0;
-      if (areaRatio >= 0.45 && areaRatio <= 0.92) {
-        areaBonus = areaRatio * 1.35;
-      } else if (areaRatio > 0.92) {
-        areaBonus = 0.92 * 1.35 - (areaRatio - 0.92) * 1.2;
-      } else {
-        areaBonus = areaRatio * 0.85;
-      }
-
-      const score =
-          conf * 3.0
-        + areaBonus
-        + aspectBonus
-        - centerPenalty * 0.55;
-
-      const scored = {
-        ...row,
-        conf,
-        score,
-        areaRatio,
-        centerPenalty,
-        aspect,
-        originalBox: { x1, y1, x2, y2, boxW, boxH }
-      };
-
-      scoredRows.push(scored);
-
-      if (score > bestScore) {
-        bestScore = score;
-        best = scored;
+      if (!best || conf > best.conf) {
+        best = { ...row, conf };
       }
     }
-
-    scoredRows.sort((a, b) => b.score - a.score);
-    console.log(
-      "[jScanner] ONNX candidates top",
-      scoredRows.slice(0, 5).map(r => ({
-        conf: Number(r.conf.toFixed(4)),
-        score: Number(r.score.toFixed(4)),
-        areaRatio: Number(r.areaRatio.toFixed(4)),
-        aspect: Number(r.aspect.toFixed(4)),
-        centerPenalty: Number(r.centerPenalty.toFixed(4)),
-        box: {
-          x1: Math.round(r.originalBox.x1),
-          y1: Math.round(r.originalBox.y1),
-          x2: Math.round(r.originalBox.x2),
-          y2: Math.round(r.originalBox.y2)
-        }
-      }))
-    );
 
     if (!best || best.conf < YOLO_CONF_THRESHOLD) {
       console.warn("[jScanner] ONNX YOLO no box", best);
