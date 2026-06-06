@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://docs.opencv.org" />
   <link rel="preconnect" href="https://cdn.jsdelivr.net" />
   <title>jScanner</title>
-  <!-- jScanner index patch: yolo-call-safe-20260605 -->
+  <!-- jScanner index patch: onnx-fast-keep-box-manual-edit-20260606 -->
 
   <style>
     * { box-sizing: border-box; }
@@ -1200,7 +1200,7 @@
   saveEditBtn.addEventListener("click", async () => {
     if (editIndex < 0 || !items[editIndex]) return;
 
-    await reprocessOneItem(editIndex, points);
+    await saveManualEditItem(editIndex, points);
     setStatus(`${editIndex + 1}번 수정 완료.`);
     showReviewMode();
   });
@@ -1619,6 +1619,7 @@
     const detected = parseYoloOnnxOutput(outputTensor, meta);
     if (detected) {
       console.log("[jScanner] ONNX detected", detected);
+      console.log("[jScanner] ONNX fast keep box", detected.points);
       return detected.points;
     }
 
@@ -1698,6 +1699,31 @@
     setStatus("보정/용량 설정 반영 완료.");
   }
 
+  async function saveManualEditItem(index, editedPoints) {
+    const item = items[index];
+    if (!item) return;
+
+    const image = await loadImage(item.originalDataUrl);
+
+    img = image;
+    imageW = image.naturalWidth;
+    imageH = image.naturalHeight;
+    loaded = true;
+
+    const manualPoints = editedPoints.map(p => ({ x: p.x, y: p.y }));
+    const result = makeDewarpDataUrl(manualPoints);
+
+    item.points = manualPoints;
+    item.resultDataUrl = result.dataUrl;
+    item.resultBlob = result.blob;
+    item.resultSize = result.blob.size;
+
+    console.log("[jScanner] manual edit saved", {
+      index,
+      points: manualPoints
+    });
+  }
+
   async function reprocessOneItem(index, newPoints) {
     const item = items[index];
     if (!item) return;
@@ -1712,10 +1738,8 @@
     let result;
 
     if (isYoloDocumentMode()) {
-      setStatus(`${index + 1}번 변환중...`);
-      const originalBlob = dataUrlToBlob(item.originalDataUrl);
-      result = await processDocumentWithYolo(originalBlob, item.name || `image_${index + 1}.jpg`);
-      newPoints = result.points || makeFullImagePoints();
+      setStatus(`${index + 1}번 보정/용량 재처리 중...`);
+      result = makeDewarpDataUrl(newPoints);
     } else {
       result = makeDewarpDataUrl(newPoints);
     }
