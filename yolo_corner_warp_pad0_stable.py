@@ -52,12 +52,29 @@ def get_model():
         if model_path.exists():
             print(f"[jScanner] YOLO model size: {model_path.stat().st_size} bytes", flush=True)
 
-        # 중요:
-        # ultralytics/torch는 무겁기 때문에 Flask 앱 시작 시점이 아니라
-        # 실제 문서(YOLO) 변환 요청이 들어온 순간에만 import한다.
-        from ultralytics import YOLO
+        import os
+        import gc
 
+        os.environ["YOLO_CONFIG_DIR"] = "/tmp/Ultralytics"
+        os.environ["MPLCONFIGDIR"] = "/tmp/matplotlib"
+        os.makedirs("/tmp/Ultralytics", exist_ok=True)
+        os.makedirs("/tmp/matplotlib", exist_ok=True)
+
+        print("[jScanner] before ultralytics import", flush=True)
+        from ultralytics import YOLO
+        print("[jScanner] after ultralytics import", flush=True)
+
+        print("[jScanner] before YOLO init", flush=True)
         _model = YOLO(str(model_path))
+        print("[jScanner] after YOLO init", flush=True)
+
+        try:
+            _model.fuse()
+            print("[jScanner] YOLO model fused", flush=True)
+        except Exception as e:
+            print(f"[jScanner] YOLO fuse skipped: {e}", flush=True)
+
+        gc.collect()
 
         print("[jScanner] YOLO model loaded", flush=True)
 
