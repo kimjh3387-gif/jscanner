@@ -377,13 +377,15 @@ def save_jpeg(img, output_path, size_mode):
 
 
 def process_image(image_path, output_path, size_mode="mid", filter_mode="auto"):
-    print("[jScanner] process_image called", flush=True)
-    print(f"[jScanner] image_path={image_path}", flush=True)
-    print(f"[jScanner] output_path={output_path}", flush=True)
-    print(f"[jScanner] size_mode={size_mode}, filter_mode={filter_mode}", flush=True)
+    print("[jScanner] process_image start", flush=True)
+    print("[jScanner] before get_model", flush=True)
 
     model = get_model()
+    print("[jScanner] after get_model", flush=True)
+
+    print("[jScanner] before cv2.imread", flush=True)
     img = cv2.imread(str(image_path))
+    print("[jScanner] after cv2.imread", flush=True)
 
     if img is None:
         raise FileNotFoundError(f"이미지를 못 읽음: {image_path}")
