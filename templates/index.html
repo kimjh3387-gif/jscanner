@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://docs.opencv.org" />
   <link rel="preconnect" href="https://cdn.jsdelivr.net" />
   <title>jScanner</title>
-  <!-- jScanner index patch: onnx-fast-keep-box-manual-edit-20260606 -->
+  <!-- jScanner index patch: yolo-call-safe-20260605 -->
 
   <style>
     * { box-sizing: border-box; }
@@ -1200,7 +1200,7 @@
   saveEditBtn.addEventListener("click", async () => {
     if (editIndex < 0 || !items[editIndex]) return;
 
-    await saveManualEditItem(editIndex, points);
+    await reprocessOneItem(editIndex, points);
     setStatus(`${editIndex + 1}번 수정 완료.`);
     showReviewMode();
   });
@@ -1602,6 +1602,197 @@
     };
   }
 
+  function orderQuadPoints(rawPts) {
+    const pts = rawPts.map(p => ({ x: Number(p.x), y: Number(p.y) }));
+
+    let tl = pts[0];
+    let tr = pts[0];
+    let br = pts[0];
+    let bl = pts[0];
+
+    for (const p of pts) {
+      const sum = p.x + p.y;
+      const diff = p.y - p.x;
+
+      if (sum < tl.x + tl.y) tl = p;
+      if (sum > br.x + br.y) br = p;
+      if (diff < tr.y - tr.x) tr = p;
+      if (diff > bl.y - bl.x) bl = p;
+    }
+
+    return [tl, tr, br, bl];
+  }
+
+  function quadArea(pts) {
+    if (!pts || pts.length !== 4) return 0;
+
+    let area = 0;
+    for (let i = 0; i < 4; i++) {
+      const p1 = pts[i];
+      const p2 = pts[(i + 1) % 4];
+      area += p1.x * p2.y - p2.x * p1.y;
+    }
+
+    return Math.abs(area) / 2;
+  }
+
+  function refineYoloBoxWithOpenCv(yoloPoints) {
+    if (!window.cvReady || typeof cv === "undefined") {
+      console.warn("[jScanner] precise corners skipped: OpenCV not ready");
+      return yoloPoints;
+    }
+
+    try {
+      const xs = yoloPoints.map(p => p.x);
+      const ys = yoloPoints.map(p => p.y);
+
+      const padX = Math.round(imageW * 0.025);
+      const padY = Math.round(imageH * 0.025);
+
+      const x1 = Math.max(0, Math.floor(Math.min(...xs) - padX));
+      const y1 = Math.max(0, Math.floor(Math.min(...ys) - padY));
+      const x2 = Math.min(imageW, Math.ceil(Math.max(...xs) + padX));
+      const y2 = Math.min(imageH, Math.ceil(Math.max(...ys) + padY));
+
+      const cropW = Math.max(1, x2 - x1);
+      const cropH = Math.max(1, y2 - y1);
+
+      const cropCanvas = document.createElement("canvas");
+      cropCanvas.width = cropW;
+      cropCanvas.height = cropH;
+
+      const cropCtx = cropCanvas.getContext("2d", { willReadFrequently: true });
+      cropCtx.drawImage(img, x1, y1, cropW, cropH, 0, 0, cropW, cropH);
+
+      const src = cv.imread(cropCanvas);
+      const hsv = new cv.Mat();
+      const yellowMask = new cv.Mat();
+      const low = new cv.Mat(src.rows, src.cols, src.type(), [15, 40, 80, 0]);
+      const high = new cv.Mat(src.rows, src.cols, src.type(), [45, 255, 255, 255]);
+
+      cv.cvtColor(src, hsv, cv.COLOR_RGBA2RGB);
+      cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
+      cv.inRange(hsv, low, high, yellowMask);
+
+      const cleaned = src.clone();
+      cleaned.setTo(new cv.Scalar(0, 0, 0, 255), yellowMask);
+
+      const gray = new cv.Mat();
+      const blur = new cv.Mat();
+      const th = new cv.Mat();
+      const closed = new cv.Mat();
+
+      cv.cvtColor(cleaned, gray, cv.COLOR_RGBA2GRAY);
+      cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0);
+      cv.threshold(blur, th, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+
+      const kernelW = Math.max(15, Math.round(cropW * 0.018));
+      const kernelH = Math.max(15, Math.round(cropH * 0.018));
+      const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(kernelW, kernelH));
+      cv.morphologyEx(th, closed, cv.MORPH_CLOSE, kernel, new cv.Point(-1, -1), 2);
+
+      const contours = new cv.MatVector();
+      const hierarchy = new cv.Mat();
+      cv.findContours(closed, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+      const cropArea = cropW * cropH;
+      let best = null;
+      let bestScore = -Infinity;
+
+      for (let i = 0; i < contours.size(); i++) {
+        const cnt = contours.get(i);
+        const area = cv.contourArea(cnt);
+
+        if (area < cropArea * 0.18) {
+          cnt.delete();
+          continue;
+        }
+
+        const peri = cv.arcLength(cnt, true);
+        const approx = new cv.Mat();
+        cv.approxPolyDP(cnt, approx, 0.025 * peri, true);
+
+        if (approx.rows === 4) {
+          const rawPts = [];
+
+          for (let j = 0; j < 4; j++) {
+            rawPts.push({
+              x: approx.intPtr(j, 0)[0],
+              y: approx.intPtr(j, 0)[1]
+            });
+          }
+
+          const ordered = orderQuadPoints(rawPts);
+          const tl = ordered[0];
+          const tr = ordered[1];
+          const br = ordered[2];
+          const bl = ordered[3];
+
+          const widthTop = Math.hypot(tr.x - tl.x, tr.y - tl.y);
+          const widthBottom = Math.hypot(br.x - bl.x, br.y - bl.y);
+          const heightLeft = Math.hypot(bl.x - tl.x, bl.y - tl.y);
+          const heightRight = Math.hypot(br.x - tr.x, br.y - tr.y);
+
+          const avgW = (widthTop + widthBottom) / 2;
+          const avgH = (heightLeft + heightRight) / 2;
+          const ratio = avgW / Math.max(1, avgH);
+
+          if (ratio < 1.05 || ratio > 2.7) {
+            approx.delete();
+            cnt.delete();
+            continue;
+          }
+
+          const rect = cv.boundingRect(approx);
+          let penalty = 0;
+
+          // crop 전체를 먹는 후보는 프로그램 화면/바탕까지 잡을 가능성이 있어 살짝 감점
+          if (rect.y < cropH * 0.025) penalty += area * 0.18;
+          if (rect.width > cropW * 0.985) penalty += area * 0.16;
+          if (rect.height > cropH * 0.985) penalty += area * 0.16;
+
+          const score = area - penalty;
+
+          if (score > bestScore) {
+            bestScore = score;
+            best = ordered.map(p => ({
+              x: clamp(p.x + x1, 0, imageW),
+              y: clamp(p.y + y1, 0, imageH)
+            }));
+          }
+        }
+
+        approx.delete();
+        cnt.delete();
+      }
+
+      src.delete();
+      hsv.delete();
+      yellowMask.delete();
+      low.delete();
+      high.delete();
+      cleaned.delete();
+      gray.delete();
+      blur.delete();
+      th.delete();
+      closed.delete();
+      kernel.delete();
+      contours.delete();
+      hierarchy.delete();
+
+      if (best && quadArea(best) > imageW * imageH * 0.12) {
+        console.log("[jScanner] ONNX precise corners", best);
+        return best;
+      }
+
+      console.log("[jScanner] ONNX precise corners fallback");
+      return yoloPoints;
+    } catch (err) {
+      console.warn("[jScanner] precise corners failed", err);
+      return yoloPoints;
+    }
+  }
+
   async function detectDocumentPointsWithOnnx(sourceImg) {
     const session = await getYoloOnnxSession();
     const meta = makeYoloInputTensorFromImage(sourceImg);
@@ -1619,8 +1810,11 @@
     const detected = parseYoloOnnxOutput(outputTensor, meta);
     if (detected) {
       console.log("[jScanner] ONNX detected", detected);
-      console.log("[jScanner] ONNX fast keep box", detected.points);
-      return detected.points;
+
+      const refinedPoints = refineYoloBoxWithOpenCv(detected.points);
+      console.log("[jScanner] ONNX refined points", refinedPoints);
+
+      return refinedPoints;
     }
 
     // YOLO가 실패하면 기존 OpenCV 자동보정으로 후퇴
@@ -1699,31 +1893,6 @@
     setStatus("보정/용량 설정 반영 완료.");
   }
 
-  async function saveManualEditItem(index, editedPoints) {
-    const item = items[index];
-    if (!item) return;
-
-    const image = await loadImage(item.originalDataUrl);
-
-    img = image;
-    imageW = image.naturalWidth;
-    imageH = image.naturalHeight;
-    loaded = true;
-
-    const manualPoints = editedPoints.map(p => ({ x: p.x, y: p.y }));
-    const result = makeDewarpDataUrl(manualPoints);
-
-    item.points = manualPoints;
-    item.resultDataUrl = result.dataUrl;
-    item.resultBlob = result.blob;
-    item.resultSize = result.blob.size;
-
-    console.log("[jScanner] manual edit saved", {
-      index,
-      points: manualPoints
-    });
-  }
-
   async function reprocessOneItem(index, newPoints) {
     const item = items[index];
     if (!item) return;
@@ -1738,7 +1907,9 @@
     let result;
 
     if (isYoloDocumentMode()) {
-      setStatus(`${index + 1}번 보정/용량 재처리 중...`);
+      // 문서(YOLO) 모드에서도 수정 화면에서 사용자가 잡은 꼭짓점을 그대로 반영한다.
+      // 기존 코드는 수정 저장 시 YOLO를 다시 돌려서 수동 수정값이 덮어써졌다.
+      setStatus(`${index + 1}번 수정/재처리 중...`);
       result = makeDewarpDataUrl(newPoints);
     } else {
       result = makeDewarpDataUrl(newPoints);
