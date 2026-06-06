@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://docs.opencv.org" />
   <link rel="preconnect" href="https://cdn.jsdelivr.net" />
   <title>jScanner</title>
-  <!-- jScanner index patch: yolo-call-safe-20260605 -->
+  <!-- jScanner index patch: onnx-keep-box-fix-manual-edit-20260606 -->
 
   <style>
     * { box-sizing: border-box; }
@@ -1815,11 +1815,11 @@
     const detected = parseYoloOnnxOutput(outputTensor, meta);
     if (detected) {
       console.log("[jScanner] ONNX detected", detected);
+      console.log("[jScanner] ONNX keep box points", detected.points);
 
-      const refinedPoints = refineYoloBoxWithOpenCv(detected.points);
-      console.log("[jScanner] ONNX refined points", refinedPoints);
-
-      return refinedPoints;
+      // 정책표 자료는 ONNX가 잡은 큰 바운딩 박스를 그대로 쓰는 편이 안정적이다.
+      // 라인/컨투어 보정은 안쪽 표선으로 빨려 들어가는 경우가 있어 자동 적용하지 않는다.
+      return detected.points;
     }
 
     // YOLO가 실패하면 기존 OpenCV 자동보정으로 후퇴
