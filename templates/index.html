@@ -9,6 +9,7 @@
   <link rel="preconnect" href="https://docs.opencv.org" />
   <link rel="preconnect" href="https://cdn.jsdelivr.net" />
   <title>jScanner</title>
+  <!-- jScanner index patch: yolo-call-safe-20260605 -->
 
   <style>
     * { box-sizing: border-box; }
@@ -656,7 +657,7 @@
   </select>
 
   <select id="detectMode">
-    <option value="auto" selected>📄 문서종류</option>
+    <option value="placeholder" selected disabled>📄 문서종류</option>
     <option value="auto">📄 자동보정</option>
     <option value="document">📄 문서(YOLO)</option>
     <option value="stats">📄 통계</option>
@@ -729,6 +730,7 @@
 
 <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvLoaded();"></script>
 <script src="https://cdn.jsdelivr.net/gh/ColonelParrot/jscanify@master/src/jscanify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
 <script>
@@ -805,6 +807,34 @@
     mid: { maxSide: 2000, quality: 0.82 },
     low: { maxSide: 1200, quality: 0.70 }
   };
+
+  // ONNX 브라우저 YOLO 설정
+  // static/models/best.onnx 파일을 브라우저가 직접 읽어서 실행한다.
+  const YOLO_ONNX_MODEL_URL = "/static/models/best.onnx";
+  const YOLO_INPUT_SIZE = 320;
+  const YOLO_CONF_THRESHOLD = 0.25;
+  let yoloOnnxSession = null;
+
+  function getDetectModeValue() {
+    if (!detectMode) return "auto";
+
+    const value = detectMode.value || "auto";
+    const selectedText = detectMode.options?.[detectMode.selectedIndex]?.text || "";
+
+    if (value === "document" || selectedText.includes("YOLO") || selectedText.includes("문서(YOLO)")) {
+      return "document";
+    }
+
+    if (value === "stats" || selectedText.includes("통계")) {
+      return "stats";
+    }
+
+    return "auto";
+  }
+
+  function isYoloDocumentMode() {
+    return getDetectModeValue() === "document";
+  }
 
   function setStatus(text) {
     statusEl.textContent = text;
@@ -1136,7 +1166,7 @@
   if (saveMode) saveMode.addEventListener("change", () => setStatus("저장방식이 변경되었습니다."));
 
   detectMode.addEventListener("change", async () => {
-    if (detectMode.value === "stats") {
+    if (getDetectModeValue() === "stats") {
       setStatus("통계 문서종류는 아직 미설정입니다.");
       alert("통계 문서종류는 아직 미설정입니다.");
       detectMode.value = "auto";
@@ -1249,7 +1279,7 @@
     const selected = Array.from(fileList || []);
     if (!selected.length) return;
 
-    if (detectMode.value === "stats") {
+    if (getDetectModeValue() === "stats") {
       setStatus("통계 문서종류는 아직 미설정입니다. 자동보정 또는 문서를 선택하세요.");
       alert("통계 문서종류는 아직 미설정입니다.");
       fileInput.value = "";
@@ -1398,41 +1428,222 @@
     ];
   }
 
-  async function processDocumentWithYolo(fileOrBlob, filename = "image.jpg") {
-    const formData = new FormData();
-    formData.append("image", fileOrBlob, filename);
-    formData.append("size_mode", sizeMode.value || "mid");
-    formData.append("filter_mode", filterMode.value || "auto");
+  async function getYoloOnnxSession() {
+    if (yoloOnnxSession) return yoloOnnxSession;
 
-    const response = await fetch("/process_document", {
-      method: "POST",
-      body: formData
+    if (typeof ort === "undefined") {
+      throw new Error("ONNX Runtime Web을 불러오지 못했습니다.");
+    }
+
+    setStatus("ONNX YOLO 모델 로딩 중...");
+    console.log("[jScanner] ONNX model loading:", YOLO_ONNX_MODEL_URL);
+
+    // wasm은 브라우저 호환성이 좋고, webgl은 기기별 편차가 있어 우선 wasm으로 고정한다.
+    yoloOnnxSession = await ort.InferenceSession.create(YOLO_ONNX_MODEL_URL, {
+      executionProviders: ["wasm"],
+      graphOptimizationLevel: "all"
     });
 
-    let payload;
-    try {
-      payload = await response.json();
-    } catch (err) {
-      throw new Error("YOLO 서버 응답을 읽지 못했습니다.");
-    }
+    console.log("[jScanner] ONNX model loaded", yoloOnnxSession.inputNames, yoloOnnxSession.outputNames);
+    return yoloOnnxSession;
+  }
 
-    if (!response.ok || !payload.ok) {
-      throw new Error(payload.error || "YOLO 문서 보정 실패");
-    }
+  function makeYoloInputTensorFromImage(sourceImg) {
+    const inputSize = YOLO_INPUT_SIZE;
+    const scale = Math.min(inputSize / sourceImg.naturalWidth, inputSize / sourceImg.naturalHeight);
+    const resizedW = Math.round(sourceImg.naturalWidth * scale);
+    const resizedH = Math.round(sourceImg.naturalHeight * scale);
+    const padX = Math.floor((inputSize - resizedW) / 2);
+    const padY = Math.floor((inputSize - resizedH) / 2);
 
-    const resultResponse = await fetch(`${payload.result_url}?t=${Date.now()}`);
-    if (!resultResponse.ok) {
-      throw new Error("YOLO 결과 이미지를 불러오지 못했습니다.");
-    }
+    const c = document.createElement("canvas");
+    c.width = inputSize;
+    c.height = inputSize;
 
-    const blob = await resultResponse.blob();
-    const dataUrl = await blobToDataUrl(blob);
+    const cctx = c.getContext("2d", { willReadFrequently: true });
+    cctx.fillStyle = "rgb(114,114,114)";
+    cctx.fillRect(0, 0, inputSize, inputSize);
+    cctx.drawImage(sourceImg, padX, padY, resizedW, resizedH);
+
+    const imageData = cctx.getImageData(0, 0, inputSize, inputSize).data;
+    const tensorData = new Float32Array(1 * 3 * inputSize * inputSize);
+    const plane = inputSize * inputSize;
+
+    for (let y = 0; y < inputSize; y++) {
+      for (let x = 0; x < inputSize; x++) {
+        const srcIdx = (y * inputSize + x) * 4;
+        const dstIdx = y * inputSize + x;
+
+        // RGB, NCHW, 0~1 normalize
+        tensorData[dstIdx] = imageData[srcIdx] / 255;
+        tensorData[plane + dstIdx] = imageData[srcIdx + 1] / 255;
+        tensorData[plane * 2 + dstIdx] = imageData[srcIdx + 2] / 255;
+      }
+    }
 
     return {
-      dataUrl,
-      blob,
-      size: blob.size,
-      detail: payload.detail || null
+      tensor: new ort.Tensor("float32", tensorData, [1, 3, inputSize, inputSize]),
+      scale,
+      padX,
+      padY,
+      inputSize
+    };
+  }
+
+  function sigmoid(x) {
+    return 1 / (1 + Math.exp(-x));
+  }
+
+  function parseYoloOnnxOutput(outputTensor, meta) {
+    const dims = outputTensor.dims;
+    const data = outputTensor.data;
+
+    if (!dims || dims.length < 3) {
+      throw new Error(`지원하지 않는 ONNX 출력 형태입니다: ${JSON.stringify(dims)}`);
+    }
+
+    let rows = [];
+    const d1 = dims[1];
+    const d2 = dims[2];
+
+    // YOLOv8 계열: [1, 5, 2100] 또는 [1, 2100, 5] 형태를 모두 처리
+    if (d1 <= d2) {
+      // [1, channels, boxes]
+      const channels = d1;
+      const boxCount = d2;
+
+      for (let i = 0; i < boxCount; i++) {
+        const cx = data[0 * boxCount + i];
+        const cy = data[1 * boxCount + i];
+        const bw = data[2 * boxCount + i];
+        const bh = data[3 * boxCount + i];
+
+        let conf = 0;
+        if (channels === 5) {
+          conf = data[4 * boxCount + i];
+        } else {
+          for (let c = 4; c < channels; c++) {
+            conf = Math.max(conf, data[c * boxCount + i]);
+          }
+        }
+
+        rows.push({ cx, cy, bw, bh, conf });
+      }
+    } else {
+      // [1, boxes, channels]
+      const boxCount = d1;
+      const channels = d2;
+
+      for (let i = 0; i < boxCount; i++) {
+        const base = i * channels;
+        const cx = data[base];
+        const cy = data[base + 1];
+        const bw = data[base + 2];
+        const bh = data[base + 3];
+
+        let conf = 0;
+        if (channels === 5) {
+          conf = data[base + 4];
+        } else {
+          for (let c = 4; c < channels; c++) {
+            conf = Math.max(conf, data[base + c]);
+          }
+        }
+
+        rows.push({ cx, cy, bw, bh, conf });
+      }
+    }
+
+    // 일부 export는 confidence가 logit처럼 나올 수 있어 보정 여지를 둔다.
+    let best = null;
+
+    for (const row of rows) {
+      let conf = row.conf;
+      if (conf > 1.0 || conf < 0.0) conf = sigmoid(conf);
+
+      if (!Number.isFinite(conf)) continue;
+
+      if (!best || conf > best.conf) {
+        best = { ...row, conf };
+      }
+    }
+
+    if (!best || best.conf < YOLO_CONF_THRESHOLD) {
+      console.warn("[jScanner] ONNX YOLO no box", best);
+      return null;
+    }
+
+    const x1Model = best.cx - best.bw / 2;
+    const y1Model = best.cy - best.bh / 2;
+    const x2Model = best.cx + best.bw / 2;
+    const y2Model = best.cy + best.bh / 2;
+
+    const x1 = clamp((x1Model - meta.padX) / meta.scale, 0, imageW);
+    const y1 = clamp((y1Model - meta.padY) / meta.scale, 0, imageH);
+    const x2 = clamp((x2Model - meta.padX) / meta.scale, 0, imageW);
+    const y2 = clamp((y2Model - meta.padY) / meta.scale, 0, imageH);
+
+    const w = x2 - x1;
+    const h = y2 - y1;
+
+    if (w < imageW * 0.10 || h < imageH * 0.10) {
+      console.warn("[jScanner] ONNX YOLO box too small", { x1, y1, x2, y2, conf: best.conf });
+      return null;
+    }
+
+    return {
+      confidence: best.conf,
+      points: [
+        { x: x1, y: y1 },
+        { x: x2, y: y1 },
+        { x: x2, y: y2 },
+        { x: x1, y: y2 }
+      ]
+    };
+  }
+
+  async function detectDocumentPointsWithOnnx(sourceImg) {
+    const session = await getYoloOnnxSession();
+    const meta = makeYoloInputTensorFromImage(sourceImg);
+    const inputName = session.inputNames[0];
+
+    setStatus("ONNX YOLO 문서 영역 탐지 중...");
+    console.log("[jScanner] ONNX before run");
+
+    const outputMap = await session.run({ [inputName]: meta.tensor });
+    const outputName = session.outputNames[0];
+    const outputTensor = outputMap[outputName];
+
+    console.log("[jScanner] ONNX after run", outputTensor.dims);
+
+    const detected = parseYoloOnnxOutput(outputTensor, meta);
+    if (detected) {
+      console.log("[jScanner] ONNX detected", detected);
+      return detected.points;
+    }
+
+    // YOLO가 실패하면 기존 OpenCV 자동보정으로 후퇴
+    setStatus("ONNX 탐지 실패. OpenCV 자동보정으로 전환합니다.");
+    return autoDetectDocumentPoints();
+  }
+
+  async function processDocumentWithYolo(fileOrBlob, filename = "image.jpg") {
+    console.log("[jScanner] Browser ONNX YOLO request:", filename);
+    setStatus(`ONNX 문서 보정 중: ${filename}`);
+
+    const detectedPoints = await detectDocumentPointsWithOnnx(img);
+    const result = makeDewarpDataUrl(detectedPoints);
+
+    return {
+      dataUrl: result.dataUrl,
+      blob: result.blob,
+      size: result.blob.size,
+      detail: {
+        engine: "onnxruntime-web",
+        model: YOLO_ONNX_MODEL_URL,
+        points: detectedPoints
+      },
+      points: detectedPoints
     };
   }
 
@@ -1447,10 +1658,10 @@
 
     let result;
 
-    if (detectMode.value === "document") {
+    if (isYoloDocumentMode()) {
       setStatus(`${index + 1}번 변환중...`);
       result = await processDocumentWithYolo(file, file.name || `image_${index + 1}.jpg`);
-      points = makeFullImagePoints();
+      points = result.points || makeFullImagePoints();
     } else {
       points = autoDetectDocumentPoints();
       result = makeDewarpDataUrl(points);
@@ -1500,11 +1711,11 @@
 
     let result;
 
-    if (detectMode.value === "document") {
+    if (isYoloDocumentMode()) {
       setStatus(`${index + 1}번 변환중...`);
       const originalBlob = dataUrlToBlob(item.originalDataUrl);
       result = await processDocumentWithYolo(originalBlob, item.name || `image_${index + 1}.jpg`);
-      newPoints = makeFullImagePoints();
+      newPoints = result.points || makeFullImagePoints();
     } else {
       result = makeDewarpDataUrl(newPoints);
     }
@@ -1772,7 +1983,7 @@
   }
 
   function getDocumentCandidates() {
-    let mode = detectMode?.value || "auto";
+    let mode = getDetectModeValue();
     if (mode === "auto") mode = "smart";
     if (mode === "document") mode = "camscanner";
 
