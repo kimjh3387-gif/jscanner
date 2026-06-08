@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://docs.opencv.org" />
   <link rel="preconnect" href="https://cdn.jsdelivr.net" />
   <title>jScanner</title>
-  <!-- jScanner index patch: apple-ui-v1.4.4-stats-3bbox-brkpt-20260608 -->
+  <!-- jScanner index patch: apple-ui-v1.3.5-tl-bbox-saveback-fix-20260608 -->
 
   <style>
 
@@ -181,7 +181,6 @@
 
   <select id="detectMode">
     <option value="document" selected>📄 문서(YOLO)</option>
-    <option value="stats">📊 통계</option>
     <option value="auto">🎯 자동보정</option>
   </select>
 
@@ -211,7 +210,7 @@
   </div>
   <div class="hud-card">
     <div class="hud-label">현재 엔진</div>
-    <div class="hud-value good">문서 · document.onnx · TL bbox · 3KPT</div>
+    <div class="hud-value good">TL bbox · 3KPT</div>
   </div>
 </div>
 <input type="hidden" id="sortMode" value="selected" />
@@ -371,24 +370,17 @@
   };
 
   // ONNX 브라우저 YOLO 설정
-  // 문서와 통계 모델을 분리해서 사용한다.
-  const YOLO_ONNX_MODEL_URLS = {
-    document: "/static/models/document.onnx",
-    stats: "/static/models/stats.onnx"
-  };
+  // static/models/best.onnx 파일을 브라우저가 직접 읽어서 실행한다.
+  const YOLO_ONNX_MODEL_URL = "/static/models/best.onnx";
   const YOLO_INPUT_SIZE = 960;
   const YOLO_CONF_THRESHOLD = 0.25;
-  const yoloOnnxSessions = {};
+  let yoloOnnxSession = null;
 
   function getDetectModeValue() {
     if (!detectMode) return "document";
 
     const value = detectMode.value || "document";
     const selectedText = detectMode.options?.[detectMode.selectedIndex]?.text || "";
-
-    if (value === "stats" || selectedText.includes("통계")) {
-      return "stats";
-    }
 
     if (value === "document" || selectedText.includes("YOLO") || selectedText.includes("문서(YOLO)")) {
       return "document";
@@ -398,20 +390,7 @@
   }
 
   function isYoloDocumentMode() {
-    const mode = getDetectModeValue();
-    return mode === "document" || mode === "stats";
-  }
-
-  function isStatsDocumentMode() {
-    return getDetectModeValue() === "stats";
-  }
-
-  function getCurrentYoloModelKey() {
-    return isStatsDocumentMode() ? "stats" : "document";
-  }
-
-  function getCurrentYoloModelUrl() {
-    return YOLO_ONNX_MODEL_URLS[getCurrentYoloModelKey()] || YOLO_ONNX_MODEL_URLS.document;
+    return getDetectModeValue() === "document";
   }
 
   function setStatus(text) {
@@ -426,21 +405,6 @@
   function updateHud() {
     if (hudItemCount) hudItemCount.textContent = `${items.length}장`;
     if (hudLearningCount) hudLearningCount.textContent = `${learningSamples.length}건`;
-    updateEngineHud();
-  }
-
-  function updateEngineHud() {
-    const engineHud = document.querySelector("#learningHud .hud-card:nth-child(3) .hud-value");
-    if (!engineHud) return;
-
-    const mode = getDetectModeValue();
-    if (mode === "stats") {
-      engineHud.textContent = "통계 · stats.onnx · 3 bbox · BR KPT";
-    } else if (mode === "document") {
-      engineHud.textContent = "문서 · document.onnx · TL bbox · 3KPT";
-    } else {
-      engineHud.textContent = "OpenCV 자동보정";
-    }
   }
 
 
@@ -876,18 +840,7 @@
   });
 
   detectMode.addEventListener("change", async () => {
-    updateHud();
-    if (!items.length) {
-      const mode = getDetectModeValue();
-      setStatus(
-        mode === "stats"
-          ? "통계 필터 선택됨. stats.onnx + TL/TR/BL bbox + BR keypoint로 처리합니다."
-          : mode === "document"
-            ? "문서 필터 선택됨. document.onnx + 좌상 bbox/나머지 keypoint로 처리합니다."
-            : "자동보정 선택됨. OpenCV 자동보정으로 처리합니다."
-      );
-      return;
-    }
+    if (!items.length) return;
     setStatus("문서종류 변경 반영 중...");
     await redetectAllResults();
   });
@@ -1160,26 +1113,23 @@
   }
 
   async function getYoloOnnxSession() {
-    const modelKey = getCurrentYoloModelKey();
-    const modelUrl = getCurrentYoloModelUrl();
-
-    if (yoloOnnxSessions[modelKey]) return yoloOnnxSessions[modelKey];
+    if (yoloOnnxSession) return yoloOnnxSession;
 
     if (typeof ort === "undefined") {
       throw new Error("ONNX Runtime Web을 불러오지 못했습니다.");
     }
 
-    setStatus(`ONNX YOLO 모델 로딩 중... ${modelKey}: ${modelUrl}`);
-    console.log("[jScanner] ONNX model loading:", modelKey, modelUrl);
+    setStatus("ONNX YOLO 모델 로딩 중...");
+    console.log("[jScanner] ONNX model loading:", YOLO_ONNX_MODEL_URL);
 
     // wasm은 브라우저 호환성이 좋고, webgl은 기기별 편차가 있어 우선 wasm으로 고정한다.
-    yoloOnnxSessions[modelKey] = await ort.InferenceSession.create(modelUrl, {
+    yoloOnnxSession = await ort.InferenceSession.create(YOLO_ONNX_MODEL_URL, {
       executionProviders: ["wasm"],
       graphOptimizationLevel: "all"
     });
 
-    console.log("[jScanner] ONNX model loaded", modelKey, yoloOnnxSessions[modelKey].inputNames, yoloOnnxSessions[modelKey].outputNames);
-    return yoloOnnxSessions[modelKey];
+    console.log("[jScanner] ONNX model loaded", yoloOnnxSession.inputNames, yoloOnnxSession.outputNames);
+    return yoloOnnxSession;
   }
 
   function makeYoloInputTensorFromImage(sourceImg) {
@@ -1390,39 +1340,21 @@
       if (rawKpts.length !== 4) continue;
 
       // 학습 라벨 순서 고정: 0=좌상, 1=우상, 2=우하, 3=좌하
-      // 문서(YOLO): 좌상 bbox + 우상/우하/좌하 keypoint
-      // 통계: 상단 bbox + 하단 keypoint
+      // 좌상단 keypoint가 실전에서 흔들릴 때가 있어 TL은 bbox 좌상단을 사용하고, 나머지 3개 꼭짓점은 keypoint를 사용한다.
       const [poseTL, poseTR, poseBR, poseBL] = rawKpts;
-      const statsMode = isStatsDocumentMode();
 
-      const tlOk = poseTL.conf >= 0.45 && isReasonablePoint(poseTL, bbox, "tl");
       const trOk = poseTR.conf >= 0.45 && isReasonablePoint(poseTR, bbox, "tr");
       const brOk = poseBR.conf >= 0.45 && isReasonablePoint(poseBR, bbox, "br");
       const blOk = poseBL.conf >= 0.45 && isReasonablePoint(poseBL, bbox, "bl");
 
-      if (statsMode) {
-        if (!brOk) continue;
-      } else {
-        if (!(trOk && brOk && blOk)) continue;
-      }
+      if (!(trOk && brOk && blOk)) continue;
 
       const tl = { x: bbox.x1, y: bbox.y1 };
-
-      const tr = statsMode
-        ? { x: bbox.x2, y: bbox.y1 }
-        : { x: poseTR.x, y: poseTR.y };
-
+      const tr = { x: poseTR.x, y: poseTR.y };
       const br = { x: poseBR.x, y: poseBR.y };
-
-      const bl = statsMode
-        ? { x: bbox.x1, y: bbox.y2 }
-        : { x: poseBL.x, y: poseBL.y };
+      const bl = { x: poseBL.x, y: poseBL.y };
 
       const points = [tl, tr, br, bl];
-
-      const pointMode = statsMode
-        ? "stats_3bbox_brkpt"
-        : "tl_bbox_rest_keypoints";
 
       const area = quadArea(points);
       const imageArea = Math.max(1, imageW * imageH);
@@ -1442,12 +1374,8 @@
       const ratio = avgW / Math.max(1, avgH);
       if (ratio < 0.7 || ratio > 2.8) continue;
 
-      const keypointAvgConf = statsMode
-        ? poseBR.conf
-        : (poseTR.conf + poseBR.conf + poseBL.conf) / 3;
-      const keypointMinConf = statsMode
-        ? poseBR.conf
-        : Math.min(poseTR.conf, poseBR.conf, poseBL.conf);
+      const keypointAvgConf = (poseTR.conf + poseBR.conf + poseBL.conf) / 3;
+      const keypointMinConf = Math.min(poseTR.conf, poseBR.conf, poseBL.conf);
 
       const centerX = (points[0].x + points[1].x + points[2].x + points[3].x) / 4;
       const centerY = (points[0].y + points[1].y + points[2].y + points[3].y) / 4;
@@ -1474,8 +1402,7 @@
         poseTR,
         poseBR,
         poseBL,
-        points,
-        pointMode
+        points
       });
     }
 
@@ -1507,7 +1434,7 @@
     return {
       confidence: best.confidence,
       score: best.score,
-      mode: best.pointMode,
+      mode: "tl_bbox_rest_keypoints",
       points: best.points
     };
   }
@@ -1551,7 +1478,7 @@
       size: result.blob.size,
       detail: {
         engine: "onnxruntime-web",
-        model: getCurrentYoloModelUrl(),
+        model: YOLO_ONNX_MODEL_URL,
         points: detectedPoints
       },
       points: detectedPoints

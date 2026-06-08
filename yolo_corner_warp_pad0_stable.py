@@ -5,7 +5,7 @@ import numpy as np
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-MODEL_PATH = BASE_DIR / "runs" / "detect" / "train" / "weights" / "best.pt"
+MODEL_PATH = BASE_DIR / "static" / "models" / "best.pt"
 
 # Render 같은 서버 환경에서는 기본 Ultralytics 설정 폴더에 쓰기 권한이 없을 수 있음.
 # YOLO/torch는 무겁기 때문에 앱 시작 때가 아니라 실제 요청 시점에만 불러온다.
@@ -420,18 +420,31 @@ def process_image(image_path, output_path, size_mode="mid", filter_mode="auto"):
 
     print("[jScanner] AFTER predict", flush=True)
 
-    boxes = results[0].boxes
+    result = results[0]
 
-    box_count = 0 if boxes is None else len(boxes)
-    print(f"[jScanner] YOLO boxes detected: {box_count}", flush=True)
+    if result.keypoints is None or len(result.keypoints) == 0:
+        raise RuntimeError("YOLO Pose가 문서 꼭짓점을 못 찾음")
 
-    if boxes is None or len(boxes) == 0:
-        raise RuntimeError("YOLO가 슬라이드를 못 찾음")
+    if result.boxes is None or len(result.boxes) == 0:
+        raise RuntimeError("YOLO Pose가 문서 박스를 못 찾음")
 
-    best_idx = int(np.argmax(boxes.conf.cpu().numpy()))
-    box = boxes.xyxy[best_idx].cpu().numpy()
+    confs = result.boxes.conf.cpu().numpy()
+    best_idx = int(np.argmax(confs))
+    best_conf = float(confs[best_idx])
 
-    pts, mode1 = find_precise_corners(img, box)
+    keypoints = result.keypoints.xy[best_idx].cpu().numpy()
+
+    if keypoints.shape[0] < 4:
+        raise RuntimeError("YOLO Pose 꼭짓점이 4개 미만임")
+
+    # 학습 라벨 순서: TL, TR, BR, BL
+    # 혹시 예측 순서가 흔들려도 안전하게 다시 정렬한다.
+    pts = keypoints[:4].astype("float32")
+    pts = order_points(pts)
+
+    print(f"[jScanner] YOLO Pose confidence: {best_conf}", flush=True)
+    print(f"[jScanner] YOLO Pose points: {pts.tolist()}", flush=True)
+
     warped_raw = warp_image(img, pts)
     warped_final, mode2 = refine_warp_by_inner_border(warped_raw)
     filtered = apply_filter(warped_final, filter_mode)
@@ -442,11 +455,13 @@ def process_image(image_path, output_path, size_mode="mid", filter_mode="auto"):
 
     return {
         "ok": True,
-        "corner_mode": mode1,
+        "corner_mode": "yolo_pose_keypoints",
         "inner_mode": mode2,
         "size_mode": size_mode,
         "filter_mode": filter_mode,
-        "output_path": str(output_path)
+        "output_path": str(output_path),
+        "confidence": best_conf,
+        "points": pts.tolist()
     }
 
 
